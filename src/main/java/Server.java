@@ -11,6 +11,8 @@ import java.util.List;
 import java.util.Map;
 
 import com.cedarsoftware.util.io.JsonWriter;
+import com.opencsv.CSVReader;
+import com.opencsv.CSVWriter;
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
@@ -26,7 +28,6 @@ public class Server {
     public static void main(String[] args) throws Exception
     {
         loadBlackList();
-        loadStats();
         HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
         server.createContext("/", new MyHandler());
         server.setExecutor(null);
@@ -38,12 +39,76 @@ public class Server {
     {
         Path filePath = Paths.get("G:\\IntelliJ\\ProxyServer\\src\\main\\resources\\blackList.txt");
         blackList = Files.readAllLines(filePath);
-        String x = "";
     }
 
-    private static void loadStats()
-    {
-        domainStatsList = null;
+    private static void readStats() {
+
+        String csvFile = "G:\\IntelliJ\\ProxyServer\\src\\main\\resources\\stats.csv";
+        BufferedReader br = null;
+        String line = "";
+        String cvsSplitBy = ",";
+
+        try {
+            domainStatsList.clear();
+            br = new BufferedReader(new FileReader(csvFile));
+            while ((line = br.readLine()) != null) {
+                String[] stat = line.split(cvsSplitBy);
+                DomainStats domainStats = new DomainStats(stat[0], Long.parseLong(stat[1]), Long.parseLong(stat[2]), Long.parseLong(stat[3]));
+                domainStatsList.add(domainStats);
+            }
+
+        } catch (FileNotFoundException e) {
+            e.printStackTrace();
+        } catch (IOException e) {
+            e.printStackTrace();
+        } finally {
+            if (br != null) {
+                try {
+                    br.close();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+
+    }
+
+    public static void updateCSV(String host, long inputSize, long outputSize) throws IOException {
+
+        //host, visits++, inputData, outputData
+        File inputFile = new File("G:\\IntelliJ\\ProxyServer\\src\\main\\resources\\stats.csv");
+
+        // Read existing file
+        CSVReader reader = new CSVReader(new FileReader(inputFile), ',');
+        List<String[]> csvBody = reader.readAll();
+        boolean exists = false;
+        for(String[] s : csvBody)
+        {
+            if (s[0].equals(host))
+            {
+                s[1]= String.valueOf(Long.parseLong(s[1])+1);
+                s[2]= String.valueOf(Long.parseLong(s[2])+inputSize);
+                s[3]= String.valueOf(Long.parseLong(s[3])+outputSize);
+                exists=true;
+                break;
+            }
+        }
+        if(!exists)
+        {
+            String[] newElement = new String[4];
+            newElement[0] = host;
+            newElement[1] = "1";
+            newElement[2] = String.valueOf(inputSize);
+            newElement[3] = String.valueOf(outputSize);
+            csvBody.add(newElement);
+        }
+        reader.close();
+
+        // Write to CSV file which is open
+        CSVWriter writer = new CSVWriter(new FileWriter(inputFile), ',');
+        writer.writeAll(csvBody);
+        writer.flush();
+        writer.close();
     }
 
     static class MyHandler implements HttpHandler {
@@ -56,8 +121,11 @@ public class Server {
                     exchange.sendResponseHeaders(403, -1);
                     OutputStream os = exchange.getResponseBody();
                     os.close();
+                    updateCSV(host, 0, 0);
                 }
                 else {
+                    long inputDataSize;
+                    long outputDataSize;
                     String path = exchange.getRequestURI().getPath();
                     pathURL = new URL(exchange.getRequestURI().toString());
                     HttpURLConnection con = (HttpURLConnection) pathURL.openConnection();
@@ -70,6 +138,7 @@ public class Server {
                             if (reqHeaders.get(key) != null) {
                                 con.setRequestProperty(key, reqHeaders.get(key).get(0));
                             }
+
                         }
                     }
 
@@ -80,6 +149,7 @@ public class Server {
                         requestBuffer.write(data, 0, end);
                     }
                     requestBuffer.flush();
+                    outputDataSize=requestBuffer.toByteArray().length;
                     con.getOutputStream().write(requestBuffer.toByteArray());
                     con.connect();
                     int responseCode = 404;
@@ -109,10 +179,13 @@ public class Server {
                             }
 
                         }
+                        inputDataSize = response.length;
                         exchange.sendResponseHeaders(responseCode, response.length);
                         OutputStream os = exchange.getResponseBody();
                         os.write(response);
                         os.close();
+                        //host, (visits++), inputData, outputData
+                        updateCSV(host, inputDataSize, outputDataSize);
                     }
                 }
 
